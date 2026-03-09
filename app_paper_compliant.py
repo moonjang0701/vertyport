@@ -423,6 +423,271 @@ def main():
             st.write(f"- P_CR: {result.P_CR:.2e}")
             st.write(f"- P_IM|CR: {result.P_IM_given_CR:.3f}")
             st.write(f"- P_FA|IM: {result.P_FA_given_IM:.3f}")
+    
+    # Step 5: Dynamic Capacity Management (Equation 2)
+    st.divider()
+    st.header("📦 Dynamic Capacity Management (Equation 2)")
+    
+    st.latex(r"C_r = \sum_{f \in F} \sum_{k \in K_f} v_f \times d^k_f \times z^k_f")
+    
+    st.markdown("""
+    **목표**: 공역 혼잡 완화 + 재배치 비용 최소화
+    
+    **변수**:
+    - `v_f`: 비행 우선순위 (제출 시간 기반)
+    - `d^k_f`: 대체 경로의 추가 비행 시간
+    - `z^k_f`: 경로 k 선택 여부 (0 또는 1)
+    """)
+    
+    st.sidebar.subheader("3️⃣ Capacity 설정")
+    num_flights = st.sidebar.slider("동시 비행 수", 3, 10, 5)
+    cell_capacity = st.sidebar.slider("셀당 최대 용량", 1, 5, 3)
+    
+    run_capacity = st.sidebar.button("▶️ Capacity 시뮬레이션", key="capacity_btn")
+    
+    if run_capacity and 'flight_plan' in st.session_state:
+        from capacity.dynamic_capacity_manager import DynamicCapacityManager, FlightOperation as CapacityOp
+        
+        with st.spinner("여러 비행 시뮬레이션 중..."):
+            # Create capacity manager
+            capacity_mgr = DynamicCapacityManager(
+                grid_shape=(256, 256, 5),
+                cell_capacity=cell_capacity,
+                lat_min=GWANAK_BOUNDS['lat_min'],
+                lat_max=GWANAK_BOUNDS['lat_max'],
+                lon_min=GWANAK_BOUNDS['lon_min'],
+                lon_max=GWANAK_BOUNDS['lon_max']
+            )
+            
+            # Generate multiple flights (variants of the base path)
+            base_plan: FlightPlan = st.session_state['flight_plan']
+            operations = []
+            
+            for flight_id in range(num_flights):
+                # Slight variations
+                offset_lat = (flight_id - num_flights/2) * 0.002
+                offset_lon = (flight_id - num_flights/2) * 0.002
+                
+                # Offset waypoints
+                waypoints = [(lat + offset_lat, lon + offset_lon, alt) 
+                            for lat, lon, alt in base_plan.waypoints]
+                
+                # Convert to grid cells
+                cells = [capacity_mgr.latlon_to_grid(lat, lon, alt) 
+                        for lat, lon, alt in waypoints]
+                
+                op = CapacityOp(
+                    flight_id=flight_id,
+                    waypoints=cells,
+                    priority=1.0 / (flight_id + 1),  # Earlier = higher
+                    duration=base_plan.total_duration
+                )
+                operations.append(op)
+            
+            # Run capacity management
+            result = capacity_mgr.optimize_capacity(operations, verbose=False)
+            
+            # Display results
+            st.success(f"✅ Capacity 최적화 완료")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("총 비행", num_flights)
+            col2.metric("혼잡 셀", result.hotspot_cells)
+            col3.metric("재배치", f"{result.rerouted}/{num_flights}")
+            col4.metric("총 비용 C_r", f"{result.total_cost:.2f}")
+            
+            # Hotspot heatmap
+            if result.hotspot_cells > 0:
+                st.subheader("🔥 혼잡도 히트맵")
+                
+                congestion = capacity_mgr.get_congestion_map()
+                
+                fig_congestion = go.Figure(data=go.Heatmap(
+                    z=congestion,
+                    colorscale='Reds',
+                    colorbar=dict(title="혼잡도<br>(비행 수)")
+                ))
+                
+                fig_congestion.update_layout(
+                    title=f"공역 혼잡도 (셀당 최대 {cell_capacity}대)",
+                    xaxis_title="Grid X",
+                    yaxis_title="Grid Y",
+                    height=500
+                )
+                
+                st.plotly_chart(fig_congestion, use_container_width=True)
+                
+                st.warning(f"⚠️ Hotspot 감지: {result.hotspot_cells}개 셀이 용량 초과")
+            else:
+                st.success("✅ 모든 셀이 용량 범위 내")
+    
+    # Step 6: Strategic Conflict Resolution (Algorithm 2)
+    st.divider()
+    st.header("🚦 Strategic Conflict Resolution (Algorithm 2)")
+    
+    st.latex(r"C_{delay} = \sum_{l \in L} \sum_{j \in J_l^{(1)}} \sum_{t \in T_{J_l^{(1)}}} \lambda_l (t - r_l^{J_l^{(1)}}) (x_{l,t}^j - x_{l,t-1}^j)")
+    
+    st.markdown("""
+    **목표**: 시간-공간 충돌 해결 + 총 지연 최소화
+    
+    **Algorithm 2 (FCFS)**:
+    1. 제출 시간 순으로 정렬 (먼저 제출 = 우선순위)
+    2. 각 셀에 대해 시간 슬롯 체크
+    3. 충돌 시 1 time unit delay
+    4. 모든 비행 스케줄링
+    """)
+    
+    st.sidebar.subheader("4️⃣ Conflict 설정")
+    num_operations = st.sidebar.slider("비행 작업 수", 3, 10, 5, key="conflict_ops")
+    separation_time = st.sidebar.slider("최소 분리 시간 (초)", 5, 30, 10)
+    
+    run_conflict = st.sidebar.button("▶️ Conflict Resolution", key="conflict_btn")
+    
+    if run_conflict and 'flight_plan' in st.session_state:
+        from conflict_resolution.strategic_conflict_resolver import (
+            StrategyConflictResolver, FlightOperation as ConflictOp
+        )
+        
+        with st.spinner("충돌 해결 중 (FCFS)..."):
+            # Create resolver
+            resolver = StrategyConflictResolver(
+                grid_shape=(256, 256, 5),
+                time_step=1.0,
+                separation=separation_time,
+                max_delay=300.0
+            )
+            
+            # Generate operations with different submission times
+            base_plan: FlightPlan = st.session_state['flight_plan']
+            operations = []
+            
+            for op_id in range(num_operations):
+                # Slight path variations
+                offset = (op_id - num_operations/2) * 0.001
+                waypoints_latlon = [(lat + offset, lon + offset, alt) 
+                                   for lat, lon, alt in base_plan.waypoints]
+                
+                # Convert to grid cells
+                def latlon_to_grid(lat, lon, alt):
+                    i = int((lat - GWANAK_BOUNDS['lat_min']) / 
+                           ((GWANAK_BOUNDS['lat_max'] - GWANAK_BOUNDS['lat_min']) / 256))
+                    j = int((lon - GWANAK_BOUNDS['lon_min']) / 
+                           ((GWANAK_BOUNDS['lon_max'] - GWANAK_BOUNDS['lon_min']) / 256))
+                    k = int((alt - 50) / 20)  # Altitude levels
+                    return (np.clip(i, 0, 255), np.clip(j, 0, 255), np.clip(k, 0, 4))
+                
+                cells = [latlon_to_grid(lat, lon, alt) for lat, lon, alt in waypoints_latlon]
+                
+                # Stagger submission times
+                submission = op_id * 5.0
+                departure = submission + 10.0
+                arrival = departure + base_plan.total_duration
+                
+                op = ConflictOp(
+                    operation_id=op_id,
+                    waypoints=cells,
+                    submission_time=submission,
+                    departure_time=departure,
+                    arrival_time=arrival,
+                    priority=1.0 / (op_id + 1)
+                )
+                operations.append(op)
+            
+            # Resolve conflicts
+            result = resolver.resolve_conflicts(operations, verbose=False)
+            
+            # Display results
+            st.success(f"✅ 충돌 해결 완료 (Algorithm 2 - FCFS)")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("스케줄된 비행", f"{len(result.operations)}/{num_operations}")
+            col2.metric("충돌 감지", result.conflicts_detected)
+            col3.metric("충돌 해결", result.conflicts_resolved)
+            col4.metric("지연 비용 C_delay", f"{result.delay_cost:.2f}")
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("총 지연", f"{result.total_delay:.1f}초")
+            col2.metric("평균 지연", f"{result.avg_delay:.1f}초")
+            col3.metric("정시 비율", f"{result.on_time_percent:.1f}%")
+            
+            # Operation schedule table
+            st.subheader("📅 비행 스케줄")
+            
+            schedule_data = []
+            for op in result.operations:
+                schedule_data.append({
+                    'Op ID': op.operation_id,
+                    '제출 시간': f"{op.submission_time:.1f}s",
+                    '예정 출발': f"{op.departure_time:.1f}s",
+                    '실제 출발': f"{op.actual_departure:.1f}s",
+                    '지연': f"{op.delay:.1f}s",
+                    '상태': '⏰ 정시' if op.delay == 0 else f'⏱️ +{op.delay:.1f}s'
+                })
+            
+            st.dataframe(schedule_data, use_container_width=True)
+            
+            # Timeline visualization
+            st.subheader("⏱️ 타임라인")
+            
+            fig_timeline = go.Figure()
+            
+            for op in result.operations:
+                # Scheduled time (transparent)
+                fig_timeline.add_trace(go.Scatter(
+                    x=[op.departure_time, op.arrival_time],
+                    y=[op.operation_id, op.operation_id],
+                    mode='lines',
+                    line=dict(color='lightgray', width=8),
+                    name=f'Op {op.operation_id} (예정)',
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+                
+                # Actual time (solid)
+                color = 'green' if op.delay == 0 else 'orange'
+                fig_timeline.add_trace(go.Scatter(
+                    x=[op.actual_departure, op.actual_departure + (op.arrival_time - op.departure_time)],
+                    y=[op.operation_id, op.operation_id],
+                    mode='lines+markers',
+                    line=dict(color=color, width=6),
+                    marker=dict(size=10),
+                    name=f'Op {op.operation_id}',
+                    hovertemplate=f'Op {op.operation_id}<br>' +
+                                 f'출발: %{{x:.1f}}s<br>' +
+                                 f'지연: {op.delay:.1f}s<extra></extra>'
+                ))
+            
+            fig_timeline.update_layout(
+                title="비행 스케줄 타임라인 (회색=예정, 컬러=실제)",
+                xaxis_title="시간 (초)",
+                yaxis_title="Operation ID",
+                height=400,
+                showlegend=False
+            )
+            
+            st.plotly_chart(fig_timeline, use_container_width=True)
+            
+            # Occupancy heatmap
+            st.subheader("🗺️ 시간대별 공역 점유")
+            
+            time_range = (0, max(op.actual_departure + (op.arrival_time - op.departure_time) 
+                                for op in result.operations))
+            occupancy_map = resolver.get_occupancy_heatmap(time_range, altitude_level=2)
+            
+            fig_occupancy = go.Figure(data=go.Heatmap(
+                z=occupancy_map,
+                colorscale='Blues',
+                colorbar=dict(title="점유<br>횟수")
+            ))
+            
+            fig_occupancy.update_layout(
+                title=f"공역 점유 히트맵 (고도 레벨 2, {time_range[0]:.0f}-{time_range[1]:.0f}초)",
+                xaxis_title="Grid X",
+                yaxis_title="Grid Y",
+                height=500
+            )
+            
+            st.plotly_chart(fig_occupancy, use_container_width=True)
 
 
 if __name__ == "__main__":
