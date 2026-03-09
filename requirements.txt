@@ -1,0 +1,27 @@
+# Core dependencies (필수)
+numpy>=1.24.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+plotly>=5.14.0
+pandas>=2.0.0
+Pillow>=10.0.0
+
+# Visualization (시각화)
+folium>=0.14.0
+branca>=0.6.0
+
+# Web interface (웹 인터페이스)
+streamlit>=1.28.0
+
+# Image processing (이미지 처리)
+opencv-python>=4.8.0
+scikit-image>=0.20.0
+
+# Geospatial (지리 데이터 - 선택사항)
+# rasterio>=1.3.0  # GeoTIFF 저장 시에만 필요 (선택사항)
+# geopandas>=0.13.0  # 고급 지리 분석 시에만 필요 (선택사항)
+# pyproj>=3.5.0  # 좌표 변환 시에만 필요 (선택사항)
+# shapely>=2.0.0  # 기하학 연산 시에만 필요 (선택사항)
+
+# Other (기타)
+networkx>=3.1
