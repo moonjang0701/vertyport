@@ -22,7 +22,6 @@ import plotly.graph_objects as go
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from data_processing.building_loader import SeoulBuildingLoader
-from data_processing.dem_generator import DEMGenerator
 from path_planning.paper_astar import PaperCompliantAstar, FlightPlan
 from visualization.safety_map import SafetyMapVisualizer
 from risk_analysis_ieee import RiskAnalysisIEEE, AircraftParams, EnvironmentalParams, GroundContext
@@ -77,18 +76,25 @@ def main():
             st.success(f"✅ Obstacle Map 생성 ({obstacle_map.shape})")
         
         with st.spinner("DEM 생성 중..."):
-            dem_gen = DEMGenerator(
-                lat_min=GWANAK_BOUNDS['lat_min'],
-                lat_max=GWANAK_BOUNDS['lat_max'],
-                lon_min=GWANAK_BOUNDS['lon_min'],
-                lon_max=GWANAK_BOUNDS['lon_max'],
-                resolution=256,
-                base_elevation=50.0,
-                elevation_range=70.0,
-                location_name="gwanak"
-            )
-            dem = dem_gen.generate()
-            st.success(f"✅ DEM 생성 ({dem.shape})")
+            # Simple DEM generation (synthetic terrain)
+            resolution = 256
+            np.random.seed(hash("gwanak") % (2**32))
+            
+            # Generate base terrain
+            x = np.linspace(0, 10, resolution)
+            y = np.linspace(0, 10, resolution)
+            X, Y = np.meshgrid(x, y)
+            
+            # Multi-scale Perlin-like noise
+            dem = 50.0  # Base elevation
+            dem += 30.0 * np.sin(X * 0.5) * np.cos(Y * 0.5)  # Large features
+            dem += 15.0 * np.sin(X * 2.0) * np.cos(Y * 2.0)  # Medium features
+            dem += 5.0 * np.random.randn(resolution, resolution)  # Small noise
+            
+            # Ensure positive elevations
+            dem = np.maximum(dem, 30.0)
+            
+            st.success(f"✅ DEM 생성 ({dem.shape}, 고도 {dem.min():.0f}-{dem.max():.0f}m)")
         
         with st.spinner("Risk Map 계산 중 (Equation 1)..."):
             # Paper method: risk from building height + population proxy
